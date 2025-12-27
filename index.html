@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文档文字提取器 - 支持Word和PDF</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #0066ff;
+            --primary-dark: #0052cc;
+            --surface: #ffffff;
+            --surface-raised: #f8f9fa;
+            --border: #e1e4e8;
+            --text-primary: #1a1a1a;
+            --text-secondary: #6a737d;
+            --success: #28a745;
+            --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+        }
+
+        body {
+            font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            color: var(--text-primary);
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            background: var(--surface);
+            border-radius: 24px;
+            box-shadow: var(--shadow-lg);
+            overflow: hidden;
+            animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            padding: 48px 40px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            animation: pulse 8s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: translate(0, 0); }
+            50% { transform: translate(-10%, -10%); }
+        }
+
+        .header h1 {
+            font-size: 36px;
+            font-weight: 900;
+            color: white;
+            margin-bottom: 12px;
+            position: relative;
+            letter-spacing: -0.5px;
+        }
+
+        .header p {
+            font-size: 16px;
+            color: rgba(255, 255, 255, 0.9);
+            position: relative;
+            font-weight: 400;
+        }
+
+        .content {
+            padding: 48px 40px;
+        }
+
+        .upload-area {
+            border: 3px dashed var(--border);
+            border-radius: 16px;
+            padding: 60px 40px;
+            text-align: center;
+            background: var(--surface-raised);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-area:hover {
+            border-color: var(--primary);
+            background: #f0f6ff;
+            transform: translateY(-2px);
+        }
+
+        .upload-area.dragover {
+            border-color: var(--primary);
+            background: #e6f0ff;
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            display: block;
+            animation: bounce 2s ease-in-out infinite;
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .upload-text {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .upload-hint {
+            font-size: 14px;
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .format-badges {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            margin-top: 16px;
+        }
+
+        .badge {
+            background: white;
+            border: 1px solid var(--border);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 12px rgba(0, 102, 255, 0.3);
+            font-family: 'Noto Sans SC', sans-serif;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 102, 255, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+
+        .file-info {
+            background: var(--surface-raised);
+            padding: 20px;
+            border-radius: 12px;
+            margin: 24px 0;
+            display: none;
+            animation: fadeIn 0.4s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .file-info.show {
+            display: block;
+        }
+
+        .file-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .file-size {
+            font-size: 14px;
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .file-type {
+            display: inline-block;
+            background: var(--primary);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: auto;
+        }
+
+        .status {
+            padding: 16px 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+            display: none;
+            font-size: 14px;
+            font-weight: 500;
+            animation: fadeIn 0.4s ease;
+        }
+
+        .status.show {
+            display: block;
+        }
+
+        .status.processing {
+            background: #fff3cd;
+            color: #856404;
+            border-left: 4px solid #ffc107;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border-left: 4px solid var(--success);
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
+        }
+
+        .actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .preview {
+            background: var(--surface-raised);
+            border-radius: 12px;
+            padding: 24px;
+            margin-top: 24px;
+            max-height: 400px;
+            overflow-y: auto;
+            display: none;
+            border: 1px solid var(--border);
+        }
+
+        .preview.show {
+            display: block;
+            animation: fadeIn 0.4s ease;
+        }
+
+        .preview h3 {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+        }
+
+        .preview-content {
+            font-size: 14px;
+            line-height: 1.8;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: #e0e0e0;
+            border-radius: 2px;
+            margin-top: 12px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--primary-dark));
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .footer {
+            padding: 24px 40px;
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 13px;
+            border-top: 1px solid var(--border);
+            background: var(--surface-raised);
+        }
+
+        @media (max-width: 640px) {
+            .container {
+                border-radius: 16px;
+            }
+            
+            .header {
+                padding: 32px 24px;
+            }
+            
+            .header h1 {
+                font-size: 28px;
+            }
+            
+            .content {
+                padding: 32px 24px;
+            }
+            
+            .upload-area {
+                padding: 40px 20px;
+            }
+            
+            .actions {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📄 文档文字提取器</h1>
+            <p>快速提取Word和PDF文档中的所有文字，生成纯文字版本</p>
+        </div>
+
+        <div class="content">
+            <div class="upload-area" id="uploadArea">
+                <span class="upload-icon">📎</span>
+                <div class="upload-text">点击或拖拽上传文档</div>
+                <div class="upload-hint">支持多种格式</div>
+                <div class="format-badges">
+                    <span class="badge">.DOCX</span>
+                    <span class="badge">.PDF</span>
+                </div>
+                <input type="file" id="fileInput" accept=".docx,.pdf">
+            </div>
+
+            <div class="file-info" id="fileInfo">
+                <div class="file-name" id="fileName">
+                    <span id="fileIcon">📄</span>
+                    <span id="fileNameText"></span>
+                    <span class="file-type" id="fileType"></span>
+                </div>
+                <div class="file-size" id="fileSize"></div>
+            </div>
+
+            <div class="status" id="status">
+                <div id="statusText"></div>
+                <div class="progress-bar" id="progressBar" style="display: none;">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+
+            <div class="preview" id="preview">
+                <h3>📝 文字预览</h3>
+                <div class="preview-content" id="previewContent"></div>
+            </div>
+
+            <div class="actions">
+                <button class="btn" id="extractBtn" style="display: none;">
+                    <span>✨</span>
+                    <span>提取文字</span>
+                </button>
+                <button class="btn" id="downloadDocBtn" style="display: none;">
+                    <span>📘</span>
+                    <span>下载Word文档</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="footer">
+            纯浏览器运行 · 数据不上传服务器 · 完全本地处理 · 支持Word和PDF
+        </div>
+    </div>
+
+    <script>
+        // 配置 PDF.js worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        let extractedText = '';
+        let originalFileName = '';
+        let currentFile = null;
+        let fileType = '';
+
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileNameText');
+        const fileSize = document.getElementById('fileSize');
+        const fileTypeEl = document.getElementById('fileType');
+        const fileIcon = document.getElementById('fileIcon');
+        const status = document.getElementById('status');
+        const statusText = document.getElementById('statusText');
+        const progressBar = document.getElementById('progressBar');
+        const progressFill = document.getElementById('progressFill');
+        const preview = document.getElementById('preview');
+        const previewContent = document.getElementById('previewContent');
+        const extractBtn = document.getElementById('extractBtn');
+        const downloadDocBtn = document.getElementById('downloadDocBtn');
+
+        // 点击上传区域
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // 文件选择
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                handleFile(file);
+            }
+        });
+
+        // 拖拽上传
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file && (file.name.endsWith('.docx') || file.name.endsWith('.pdf'))) {
+                handleFile(file);
+            } else {
+                showStatus('请上传.docx或.pdf格式的文档', 'error');
+            }
+        });
+
+        // 处理文件
+        function handleFile(file) {
+            currentFile = file;
+            const extension = file.name.split('.').pop().toLowerCase();
+            fileType = extension;
+            originalFileName = file.name.replace(new RegExp(`\\.${extension}$`), '');
+            
+            // 设置文件图标和类型标签
+            if (extension === 'pdf') {
+                fileIcon.textContent = '📕';
+                fileTypeEl.textContent = 'PDF';
+            } else {
+                fileIcon.textContent = '📄';
+                fileTypeEl.textContent = 'WORD';
+            }
+            
+            fileInfo.classList.add('show');
+            fileName.textContent = file.name;
+            fileSize.textContent = `文件大小: ${(file.size / 1024).toFixed(2)} KB`;
+            
+            extractBtn.style.display = 'inline-flex';
+            downloadDocBtn.style.display = 'none';
+            preview.classList.remove('show');
+            status.classList.remove('show');
+            progressBar.style.display = 'none';
+        }
+
+        // 从PDF提取文字（智能识别段落，同一段落不换行）
+        async function extractTextFromPDF(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            const totalPages = pdf.numPages;
+            let fullText = '';
+
+            for (let i = 1; i <= totalPages; i++) {
+                // 更新进度
+                const progress = (i / totalPages) * 100;
+                updateProgress(progress, `正在处理第 ${i}/${totalPages} 页...`);
+
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                
+                // 提取文字并智能识别段落
+                let pageText = '';
+                let lastFontSize = null;
+                let lastFontName = null;
+                let lastY = null;
+                let lastStr = '';
+                
+                textContent.items.forEach((item, index) => {
+                    const str = item.str;
+                    if (!str.trim()) return; // 跳过纯空格
+                    
+                    // 获取字号和字体信息
+                    const fontSize = Math.abs(item.transform[3]);
+                    const fontName = item.fontName || '';
+                    const currentY = item.transform[5]; // Y坐标
+                    
+                    // 判断是否需要换行（新段落）
+                    let shouldNewLine = false;
+                    
+                    // 检查当前文本是否是列表项开头（优先级最高）
+                    const isListItem = checkListFormat(str.trim());
+                    
+                    // 如果是列表项且不是第一行，强制换行
+                    if (isListItem && pageText.trim()) {
+                        shouldNewLine = true;
+                    } else if (lastFontSize !== null && lastStr) {
+                        const fontSizeDiff = Math.abs(fontSize - lastFontSize);
+                        const yDiff = lastY !== null ? Math.abs(currentY - lastY) : 0;
+                        
+                        // 判断上一句是否结束（是否有结束标点）
+                        const lastEnded = /[。！？.!?;；]\s*$/.test(lastStr.trim());
+                        
+                        // 换行条件（按优先级）：
+                        // 1. 字号变化超过0.5（标题、正文等切换）
+                        if (fontSizeDiff > 0.5) {
+                            shouldNewLine = true;
+                        }
+                        // 2. 字体变化
+                        else if (fontName !== lastFontName) {
+                            shouldNewLine = true;
+                        }
+                        // 3. Y坐标变化大（超过2倍行高）且上一句已结束
+                        else if (yDiff > fontSize * 2 && lastEnded) {
+                            shouldNewLine = true;
+                        }
+                    }
+                    
+                    if (shouldNewLine) {
+                        pageText += '\n';
+                    } else if (pageText && lastStr) {
+                        // 同一段落内，智能添加空格
+                        const lastChar = lastStr.trim().slice(-1);
+                        const firstChar = str.trim()[0];
+                        
+                        // 判断是否需要空格
+                        const lastIsLatin = /[a-zA-Z0-9]/.test(lastChar);
+                        const firstIsLatin = /^[a-zA-Z0-9]/.test(firstChar);
+                        
+                        // 只在英文单词之间添加空格，中文不加
+                        if (lastIsLatin && firstIsLatin && !lastStr.endsWith(' ') && !str.startsWith(' ')) {
+                            pageText += ' ';
+                        }
+                    }
+                    
+                    pageText += str;
+                    lastFontSize = fontSize;
+                    lastFontName = fontName;
+                    lastY = currentY;
+                    lastStr = str;
+                });
+                
+                fullText += pageText.trim();
+                
+                // 换页时添加双换行分隔（除了最后一页）
+                if (i < totalPages) {
+                    fullText += '\n\n';
+                }
+            }
+
+            return fullText.trim();
+        }
+
+        // 从Word文档提取文字
+        async function extractTextFromWord(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+            return result.value.trim();
+        }
+
+        // 检查是否是列表格式开头
+        function checkListFormat(str) {
+            if (!str) return false;
+            
+            // 各种列表格式的正则表达式（不包含字母序号）
+            const listPatterns = [
+                // 数字序号：1. 2. 3. 或 1、2、3、 或 1) 2) 3)
+                /^\d+[\.\)、]\s*/,
+                
+                // 中文序号：一、二、三、
+                /^[一二三四五六七八九十百千万]+[、\.]\s*/,
+                
+                // 圆圈数字：①②③④⑤⑥⑦⑧⑨⑩
+                /^[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]/,
+                
+                // 括号序号：(1) (2) (3) 或 （1） （2）
+                /^[（\(]\d+[）\)]\s*/,
+                
+                // 项目符号：• · * -
+                /^[•·\*\-]\s+/,
+            ];
+            
+            // 检查是否匹配任何列表格式
+            return listPatterns.some(pattern => pattern.test(str));
+        }
+
+        // 更新进度
+        function updateProgress(percent, message) {
+            progressBar.style.display = 'block';
+            progressFill.style.width = percent + '%';
+            statusText.textContent = message;
+        }
+
+        // 提取文字
+        extractBtn.addEventListener('click', async () => {
+            if (!currentFile) return;
+
+            showStatus('正在提取文字...', 'processing');
+            extractBtn.disabled = true;
+            extractBtn.innerHTML = '<span class="spinner"></span><span>处理中...</span>';
+            progressBar.style.display = 'none';
+
+            try {
+                if (fileType === 'pdf') {
+                    extractedText = await extractTextFromPDF(currentFile);
+                } else if (fileType === 'docx') {
+                    showStatus('正在提取文字...', 'processing');
+                    extractedText = await extractTextFromWord(currentFile);
+                }
+                
+                if (!extractedText) {
+                    showStatus('未能提取到文字内容，请检查文档是否包含文字', 'error');
+                    extractBtn.disabled = false;
+                    extractBtn.innerHTML = '<span>✨</span><span>提取文字</span>';
+                    progressBar.style.display = 'none';
+                    return;
+                }
+
+                // 显示预览
+                preview.classList.add('show');
+                const previewText = extractedText.length > 1000 
+                    ? extractedText.substring(0, 1000) + '\n\n... (预览前1000字符)' 
+                    : extractedText;
+                previewContent.textContent = previewText;
+
+                progressBar.style.display = 'none';
+                showStatus(`✅ 成功提取 ${extractedText.length} 个字符`, 'success');
+                downloadDocBtn.style.display = 'inline-flex';
+                extractBtn.disabled = false;
+                extractBtn.innerHTML = '<span>✨</span><span>重新提取</span>';
+
+            } catch (error) {
+                console.error(error);
+                showStatus('提取失败: ' + error.message, 'error');
+                extractBtn.disabled = false;
+                extractBtn.innerHTML = '<span>✨</span><span>提取文字</span>';
+                progressBar.style.display = 'none';
+            }
+        });
+
+        // 下载Word文档（手动构建标准docx格式）
+        downloadDocBtn.addEventListener('click', async () => {
+            if (!extractedText) return;
+
+            downloadDocBtn.disabled = true;
+            downloadDocBtn.innerHTML = '<span class="spinner"></span><span>生成中...</span>';
+
+            try {
+                // 创建zip对象
+                const zip = new JSZip();
+                
+                // 处理段落和分页
+                let documentXml = '';
+                const sections = extractedText.split('\n\n'); // 按双换行分割（分页标记）
+                
+                sections.forEach((section, sectionIndex) => {
+                    if (!section.trim()) return;
+                    
+                    // 每个section内的单换行是段落
+                    const paragraphs = section.split('\n').filter(p => p.trim());
+                    
+                    paragraphs.forEach(para => {
+                        documentXml += `
+                            <w:p>
+                                <w:pPr>
+                                    <w:spacing w:after="120" w:line="276" w:lineRule="auto"/>
+                                    <w:jc w:val="both"/>
+                                </w:pPr>
+                                <w:r>
+                                    <w:rPr>
+                                        <w:rFonts w:ascii="宋体" w:eastAsia="宋体" w:hAnsi="宋体"/>
+                                        <w:sz w:val="24"/>
+                                        <w:szCs w:val="24"/>
+                                    </w:rPr>
+                                    <w:t xml:space="preserve">${escapeXml(para)}</w:t>
+                                </w:r>
+                            </w:p>`;
+                    });
+                    
+                    // 在sections之间添加空行（除了最后一个section）
+                    if (sectionIndex < sections.length - 1) {
+                        documentXml += `
+                            <w:p>
+                                <w:pPr>
+                                    <w:spacing w:after="0" w:line="276" w:lineRule="auto"/>
+                                </w:pPr>
+                            </w:p>`;
+                    }
+                });
+                
+                // [Content_Types].xml
+                zip.file('[Content_Types].xml', 
+`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+    <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+    <Default Extension="xml" ContentType="application/xml"/>
+    <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+    <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+    <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>`);
+
+                // _rels/.rels
+                zip.folder('_rels').file('.rels',
+`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+    <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+    <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>`);
+
+                // docProps/core.xml
+                zip.folder('docProps').file('core.xml',
+`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <dc:title>纯文字文档</dc:title>
+    <dc:creator>文档提取器</dc:creator>
+    <cp:lastModifiedBy>文档提取器</cp:lastModifiedBy>
+    <cp:revision>1</cp:revision>
+    <dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString()}</dcterms:created>
+    <dcterms:modified xsi:type="dcterms:W3CDTF">${new Date().toISOString()}</dcterms:modified>
+</cp:coreProperties>`);
+
+                // docProps/app.xml
+                zip.folder('docProps').file('app.xml',
+`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+    <Application>文档提取器</Application>
+    <DocSecurity>0</DocSecurity>
+    <ScaleCrop>false</ScaleCrop>
+    <Company></Company>
+    <LinksUpToDate>false</LinksUpToDate>
+    <SharedDoc>false</SharedDoc>
+    <HyperlinksChanged>false</HyperlinksChanged>
+    <AppVersion>1.0</AppVersion>
+</Properties>`);
+
+                // word/document.xml
+                zip.folder('word').file('document.xml',
+`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" 
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+    <w:body>
+        ${documentXml}
+        <w:sectPr>
+            <w:pgSz w:w="11906" w:h="16838"/>
+            <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>
+        </w:sectPr>
+    </w:body>
+</w:document>`);
+
+                // word/_rels/document.xml.rels
+                zip.folder('word').folder('_rels').file('document.xml.rels',
+`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>`);
+
+                // 生成docx文件（设置正确的MIME类型）
+                const blob = await zip.generateAsync({
+                    type: 'blob',
+                    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    compression: 'DEFLATE'
+                });
+                
+                // 检测是否为移动Safari
+                const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+                const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+                
+                if (isSafari && isMobile) {
+                    // iOS Safari使用特殊处理
+                    try {
+                        // 创建正确类型的Blob
+                        const correctBlob = new Blob([blob], {
+                            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                        });
+                        
+                        const url = URL.createObjectURL(correctBlob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = `${originalFileName}_纯文字.docx`;
+                        link.style.display = 'none';
+                        
+                        document.body.appendChild(link);
+                        link.click();
+                        
+                        // 延迟清理
+                        setTimeout(() => {
+                            document.body.removeChild(link);
+                            URL.revokeObjectURL(url);
+                        }, 100);
+                    } catch (err) {
+                        console.error('Safari download error:', err);
+                        saveAs(blob, `${originalFileName}_纯文字.docx`);
+                    }
+                } else {
+                    // 其他浏览器使用FileSaver
+                    saveAs(blob, `${originalFileName}_纯文字.docx`);
+                }
+
+                showStatus('✅ Word文档已下载！', 'success');
+                downloadDocBtn.disabled = false;
+                downloadDocBtn.innerHTML = '<span>📘</span><span>重新下载</span>';
+
+            } catch (error) {
+                console.error('下载错误:', error);
+                showStatus('生成Word文档失败: ' + error.message, 'error');
+                downloadDocBtn.disabled = false;
+                downloadDocBtn.innerHTML = '<span>📘</span><span>下载Word文档</span>';
+            }
+        });
+
+        // HTML转义函数
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // XML转义函数
+        function escapeXml(text) {
+            return text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&apos;');
+        }
+
+        // 显示状态
+        function showStatus(message, type) {
+            statusText.textContent = message;
+            status.className = 'status show ' + type;
+        }
+    </script>
+</body>
+</html>
